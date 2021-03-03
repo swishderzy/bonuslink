@@ -14,24 +14,26 @@ from trello import TrelloClient
 
 # get name, phone, blcard, ttorll, dd, ins:
 df = get_data.data_extractor.SQL_Query("""
-    select distinct  mob.date_created, users.bonus_link_card_number, mob.fullname, users.phone, mob.email_address, 
+    select distinct  mob.date_created, users.bonus_link_card_number, mob.fullname, users.id, users.phone, mob.email_address, 
 	case when pp.id is null then "TT" else "LL" end as user_type, 
-    case when agr.id is null then "False" else "True" end as has_dd, 
-    case when agr.allianz_insurance is null then "no_deal" else agr.allianz_insurance end as insuarnce,
-    ccs.trello_card_id
-	from  speedmanage.users left join speedrent.mobile_user mob on users.phone = mob.phone_number collate utf8_general_ci
+    case when agr.status like "Complete" then "True" else "False" end as has_dd, 
+    agr.date_created as deal_date, agr.price,
+    case when agr.allianz_insurance is null then "no_insurance" else agr.allianz_insurance end as insuarnce, ccs.trello_card_id
+	from speedmanage.users left join speedmanage.agreement agr on (agr.tenant_user_id = users.id or agr.landlord_user_id=users.id)
+    left join speedrent.mobile_user mob on users.phone = mob.phone_number collate utf8_general_ci
     left join property pp on mob.id=pp.mobile_user_id
-    left join speedmanage.agreement agr on agr.tenant_user_id = users.id
     left join speedrent.callcenter_sales ccs on ccs.tenant_id = mob.id
     where users.bonus_link_card_number is not null
-    and (agr.status like "Complete" or agr.status is null)
-    and (agr.date_created >= "2021-01-01" or agr.date_created is null)
-    and (agr.tenant_user_id in (select distinct user_id from speedmanage.invoices where status like "paid") or agr.tenant_user_id is null)
+    and agr.status like "Complete"
+    and agr.date_created >= "2021-01-25"
+    and agr.tenant_user_id in (select distinct user_id from speedmanage.invoices where status like "paid" and speedmanage.invoices.date_created >= "2021-01-25")
     """)
 
 
-df = pd.DataFrame(df, columns = ['date_created', 'bonus_link_card_number',	'fullname','phone',	'email_address','user_type','has_dd','insurance', 'trello_id'])
+df = pd.DataFrame(df, columns = ['date_created', 'bonus_link_card_number',	'fullname','user_id', 'phone',	'email_address','user_type','has_dd', 'deal_date', 'price', 'insurance', 'trello_id'])
 df
+
+
 
 
 #get trello card lane:
@@ -51,9 +53,9 @@ board_id = [b.id for b in all_boards if "Speedrent Sales" in str(b)][0]
 board = client.get_board(board_id)
 
 current_lanes = pd.DataFrame(columns = ['card_id', 'lane'])
-for _, card_id in enumerate(df['trello_id'].dropna()):
+for _, card_id in enumerate(df.dropna(subset=['trello_id']).reset_index(drop=True)['trello_id']):
     if not _%5:
-        print("fetching trello card current lane ===> ", _, "/", len(df), "=====>")
+        print("fetching trello card current lane ===> ", _, "/", len(df.dropna(subset=['trello_id']).reset_index(drop=True)))
     try:
         card = client.get_card(card_id)
         lane = card.get_list().name
@@ -100,4 +102,4 @@ def update_sheet(data, spreadsheet_name = "BonusLink tracking", sheet_name = "Bo
 
     print("Done updating:", spreadsheet_name, "==>", sheet_name)
 
-update_sheet(df)
+update_sheet(df.sort_values('deal_date', ascending = False))
